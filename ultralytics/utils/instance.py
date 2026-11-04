@@ -1,4 +1,4 @@
-# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+# Ultralytics YOLO 🚀, AGPL-3.0 license
 
 from collections import abc
 from itertools import repeat
@@ -7,7 +7,7 @@ from typing import List
 
 import numpy as np
 
-from .ops import ltwh2xywh, ltwh2xyxy, resample_segments, xywh2ltwh, xywh2xyxy, xyxy2ltwh, xyxy2xywh
+from .ops import ltwh2xywh, ltwh2xyxy, xywh2ltwh, xywh2xyxy, xyxy2ltwh, xyxy2xywh
 
 
 def _ntuple(n):
@@ -28,7 +28,7 @@ to_4tuple = _ntuple(4)
 # `ltwh` means left top and width, height(COCO format)
 _formats = ["xyxy", "xywh", "ltwh"]
 
-__all__ = ("Bboxes", "Instances")  # tuple or list
+__all__ = ("Bboxes",)  # tuple or list
 
 
 class Bboxes:
@@ -96,11 +96,8 @@ class Bboxes:
 
     def mul(self, scale):
         """
-        Multiply bounding box coordinates by scale factor(s).
-
         Args:
-            scale (int | tuple | list): Scale factor(s) for four coordinates.
-                If int, the same scale is applied to all coordinates.
+            scale (tuple | list | int): the scale for four coords.
         """
         if isinstance(scale, Number):
             scale = to_4tuple(scale)
@@ -113,11 +110,8 @@ class Bboxes:
 
     def add(self, offset):
         """
-        Add offset to bounding box coordinates.
-
         Args:
-            offset (int | tuple | list): Offset(s) for four coordinates.
-                If int, the same offset is applied to all coordinates.
+            offset (tuple | list | int): the offset for four coords.
         """
         if isinstance(offset, Number):
             offset = to_4tuple(offset)
@@ -176,7 +170,7 @@ class Bboxes:
             length as the number of bounding boxes.
         """
         if isinstance(index, int):
-            return Bboxes(self.bboxes[index].reshape(1, -1))
+            return Bboxes(self.bboxes[index].view(1, -1))
         b = self.bboxes[index]
         assert b.ndim == 2, f"Indexing on Bboxes with {index} failed to return a matrix!"
         return Bboxes(b)
@@ -205,7 +199,7 @@ class Instances:
         instances = Instances(
             bboxes=np.array([[10, 10, 30, 30], [20, 20, 40, 40]]),
             segments=[np.array([[5, 5], [10, 10]]), np.array([[15, 15], [20, 20]])],
-            keypoints=np.array([[[5, 5, 1], [10, 10, 1]], [[15, 15, 1], [20, 20, 1]]]),
+            keypoints=np.array([[[5, 5, 1], [10, 10, 1]], [[15, 15, 1], [20, 20, 1]]])
         )
         ```
 
@@ -216,14 +210,10 @@ class Instances:
 
     def __init__(self, bboxes, segments=None, keypoints=None, bbox_format="xywh", normalized=True) -> None:
         """
-        Initialize the object with bounding boxes, segments, and keypoints.
-
         Args:
-            bboxes (np.ndarray): Bounding boxes, shape [N, 4].
-            segments (list | np.ndarray, optional): Segmentation masks. Defaults to None.
-            keypoints (np.ndarray, optional): Keypoints, shape [N, 17, 3] and format (x, y, visible). Defaults to None.
-            bbox_format (str, optional): Format of bboxes. Defaults to "xywh".
-            normalized (bool, optional): Whether the coordinates are normalized. Defaults to True.
+            bboxes (ndarray): bboxes with shape [N, 4].
+            segments (list | ndarray): segments.
+            keypoints (ndarray): keypoints(x, y, visible) with shape [N, 17, 3].
         """
         self._bboxes = Bboxes(bboxes=bboxes, format=bbox_format)
         self.keypoints = keypoints
@@ -240,7 +230,7 @@ class Instances:
         return self._bboxes.areas()
 
     def scale(self, scale_w, scale_h, bbox_only=False):
-        """Similar to denormalize func but without normalized sign."""
+        """This might be similar with denormalize func but without normalized sign."""
         self._bboxes.mul(scale=(scale_w, scale_h, scale_w, scale_h))
         if bbox_only:
             return
@@ -406,20 +396,7 @@ class Instances:
         normalized = instances_list[0].normalized
 
         cat_boxes = np.concatenate([ins.bboxes for ins in instances_list], axis=axis)
-        seg_len = [b.segments.shape[1] for b in instances_list]
-        if len(set(seg_len)) > 1:  # resample segments if there's different length
-            max_len = max(seg_len)
-            cat_segments = np.concatenate(
-                [
-                    resample_segments(list(b.segments), max_len)
-                    if len(b.segments)
-                    else np.zeros((0, max_len, 2), dtype=np.float32)  # re-generating empty segments
-                    for b in instances_list
-                ],
-                axis=axis,
-            )
-        else:
-            cat_segments = np.concatenate([b.segments for b in instances_list], axis=axis)
+        cat_segments = np.concatenate([b.segments for b in instances_list], axis=axis)
         cat_keypoints = np.concatenate([b.keypoints for b in instances_list], axis=axis) if use_keypoint else None
         return cls(cat_boxes, cat_segments, cat_keypoints, bbox_format, normalized)
 

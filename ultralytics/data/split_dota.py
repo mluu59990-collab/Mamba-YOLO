@@ -1,4 +1,4 @@
-# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+# Ultralytics YOLO 🚀, AGPL-3.0 license
 
 import itertools
 from glob import glob
@@ -13,29 +13,21 @@ from tqdm import tqdm
 from ultralytics.data.utils import exif_size, img2label_paths
 from ultralytics.utils.checks import check_requirements
 
+check_requirements("shapely")
+from shapely.geometry import Polygon
+
 
 def bbox_iof(polygon1, bbox2, eps=1e-6):
     """
-    Calculate Intersection over Foreground (IoF) between polygons and bounding boxes.
+    Calculate iofs between bbox1 and bbox2.
 
     Args:
-        polygon1 (np.ndarray): Polygon coordinates, shape (n, 8).
-        bbox2 (np.ndarray): Bounding boxes, shape (n, 4).
-        eps (float, optional): Small value to prevent division by zero. Defaults to 1e-6.
-
-    Returns:
-        (np.ndarray): IoF scores, shape (n, 1) or (n, m) if bbox2 is (m, 4).
-
-    Note:
-        Polygon format: [x1, y1, x2, y2, x3, y3, x4, y4].
-        Bounding box format: [x_min, y_min, x_max, y_max].
+        polygon1 (np.ndarray): Polygon coordinates, (n, 8).
+        bbox2 (np.ndarray): Bounding boxes, (n ,4).
     """
-    check_requirements("shapely")
-    from shapely.geometry import Polygon
-
     polygon1 = polygon1.reshape(-1, 4, 2)
-    lt_point = np.min(polygon1, axis=-2)  # left-top
-    rb_point = np.max(polygon1, axis=-2)  # right-bottom
+    lt_point = np.min(polygon1, axis=-2)
+    rb_point = np.max(polygon1, axis=-2)
     bbox1 = np.concatenate([lt_point, rb_point], axis=-1)
 
     lt = np.maximum(bbox1[:, None, :2], bbox2[..., :2])
@@ -43,8 +35,8 @@ def bbox_iof(polygon1, bbox2, eps=1e-6):
     wh = np.clip(rb - lt, 0, np.inf)
     h_overlaps = wh[..., 0] * wh[..., 1]
 
-    left, top, right, bottom = (bbox2[..., i] for i in range(4))
-    polygon2 = np.stack([left, top, right, top, right, bottom, left, bottom], axis=-1).reshape(-1, 4, 2)
+    l, t, r, b = (bbox2[..., i] for i in range(4))
+    polygon2 = np.stack([l, t, r, t, r, b, l, b], axis=-1).reshape(-1, 4, 2)
 
     sg_polys1 = [Polygon(p) for p in polygon1]
     sg_polys2 = [Polygon(p) for p in polygon2]
@@ -67,7 +59,7 @@ def load_yolo_dota(data_root, split="train"):
 
     Args:
         data_root (str): Data root.
-        split (str): The split data set, could be `train` or `val`.
+        split (str): The split data set, could be train or val.
 
     Notes:
         The directory structure assumed for the DOTA dataset:
@@ -94,7 +86,7 @@ def load_yolo_dota(data_root, split="train"):
     return annos
 
 
-def get_windows(im_size, crop_sizes=(1024,), gaps=(200,), im_rate_thr=0.6, eps=0.01):
+def get_windows(im_size, crop_sizes=[1024], gaps=[200], im_rate_thr=0.6, eps=0.01):
     """
     Get the coordinates of windows.
 
@@ -103,7 +95,6 @@ def get_windows(im_size, crop_sizes=(1024,), gaps=(200,), im_rate_thr=0.6, eps=0
         crop_sizes (List(int)): Crop size of windows.
         gaps (List(int)): Gap between crops.
         im_rate_thr (float): Threshold of windows areas divided by image ares.
-        eps (float): Epsilon value for math operations.
     """
     h, w = im_size
     windows = []
@@ -152,7 +143,7 @@ def get_window_obj(anno, windows, iof_thr=0.7):
         return [np.zeros((0, 9), dtype=np.float32) for _ in range(len(windows))]  # window_anns
 
 
-def crop_and_save(anno, windows, window_objs, im_dir, lb_dir, allow_background_images=True):
+def crop_and_save(anno, windows, window_objs, im_dir, lb_dir):
     """
     Crop images and save new labels.
 
@@ -162,7 +153,6 @@ def crop_and_save(anno, windows, window_objs, im_dir, lb_dir, allow_background_i
         window_objs (list): A list of labels inside each window.
         im_dir (str): The output directory path of images.
         lb_dir (str): The output directory path of labels.
-        allow_background_images (bool): Whether to include background images without labels.
 
     Notes:
         The directory structure assumed for the DOTA dataset:
@@ -182,22 +172,22 @@ def crop_and_save(anno, windows, window_objs, im_dir, lb_dir, allow_background_i
         patch_im = im[y_start:y_stop, x_start:x_stop]
         ph, pw = patch_im.shape[:2]
 
+        cv2.imwrite(str(Path(im_dir) / f"{new_name}.jpg"), patch_im)
         label = window_objs[i]
-        if len(label) or allow_background_images:
-            cv2.imwrite(str(Path(im_dir) / f"{new_name}.jpg"), patch_im)
-        if len(label):
-            label[:, 1::2] -= x_start
-            label[:, 2::2] -= y_start
-            label[:, 1::2] /= pw
-            label[:, 2::2] /= ph
+        if len(label) == 0:
+            continue
+        label[:, 1::2] -= x_start
+        label[:, 2::2] -= y_start
+        label[:, 1::2] /= pw
+        label[:, 2::2] /= ph
 
-            with open(Path(lb_dir) / f"{new_name}.txt", "w") as f:
-                for lb in label:
-                    formatted_coords = [f"{coord:.6g}" for coord in lb[1:]]
-                    f.write(f"{int(lb[0])} {' '.join(formatted_coords)}\n")
+        with open(Path(lb_dir) / f"{new_name}.txt", "w") as f:
+            for lb in label:
+                formatted_coords = ["{:.6g}".format(coord) for coord in lb[1:]]
+                f.write(f"{int(lb[0])} {' '.join(formatted_coords)}\n")
 
 
-def split_images_and_labels(data_root, save_dir, split="train", crop_sizes=(1024,), gaps=(200,)):
+def split_images_and_labels(data_root, save_dir, split="train", crop_sizes=[1024], gaps=[200]):
     """
     Split both images and labels.
 
@@ -227,7 +217,7 @@ def split_images_and_labels(data_root, save_dir, split="train", crop_sizes=(1024
         crop_and_save(anno, windows, window_objs, str(im_dir), str(lb_dir))
 
 
-def split_trainval(data_root, save_dir, crop_size=1024, gap=200, rates=(1.0,)):
+def split_trainval(data_root, save_dir, crop_size=1024, gap=200, rates=[1.0]):
     """
     Split train and val set of DOTA.
 
@@ -257,7 +247,7 @@ def split_trainval(data_root, save_dir, crop_size=1024, gap=200, rates=(1.0,)):
         split_images_and_labels(data_root, save_dir, split, crop_sizes, gaps)
 
 
-def split_test(data_root, save_dir, crop_size=1024, gap=200, rates=(1.0,)):
+def split_test(data_root, save_dir, crop_size=1024, gap=200, rates=[1.0]):
     """
     Split test set of DOTA, labels are not included within this set.
 

@@ -1,4 +1,4 @@
-# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+# Ultralytics YOLO 🚀, AGPL-3.0 license
 """Convolution modules."""
 
 import math
@@ -21,7 +21,6 @@ __all__ = (
     "CBAM",
     "Concat",
     "RepConv",
-    "Index",
 )
 
 
@@ -51,7 +50,7 @@ class Conv(nn.Module):
         return self.act(self.bn(self.conv(x)))
 
     def forward_fuse(self, x):
-        """Apply convolution and activation without batch normalization."""
+        """Perform transposed convolution of 2D data."""
         return self.act(self.conv(x))
 
 
@@ -159,7 +158,9 @@ class GhostConv(nn.Module):
     """Ghost Convolution https://github.com/huawei-noah/ghostnet."""
 
     def __init__(self, c1, c2, k=1, s=1, g=1, act=True):
-        """Initializes Ghost Convolution module with primary and cheap operations for efficient feature learning."""
+        """Initializes the GhostConv object with input channels, output channels, kernel size, stride, groups and
+        activation.
+        """
         super().__init__()
         c_ = c2 // 2  # hidden channels
         self.cv1 = Conv(c1, c_, k, s, None, g, act=act)
@@ -210,8 +211,7 @@ class RepConv(nn.Module):
         kernelid, biasid = self._fuse_bn_tensor(self.bn)
         return kernel3x3 + self._pad_1x1_to_3x3_tensor(kernel1x1) + kernelid, bias3x3 + bias1x1 + biasid
 
-    @staticmethod
-    def _pad_1x1_to_3x3_tensor(kernel1x1):
+    def _pad_1x1_to_3x3_tensor(self, kernel1x1):
         """Pads a 1x1 tensor to a 3x3 tensor."""
         if kernel1x1 is None:
             return 0
@@ -331,20 +331,3 @@ class Concat(nn.Module):
     def forward(self, x):
         """Forward pass for the YOLOv8 mask Proto module."""
         return torch.cat(x, self.d)
-
-
-class Index(nn.Module):
-    """Returns a particular index of the input."""
-
-    def __init__(self, c1, c2, index=0):
-        """Returns a particular index of the input."""
-        super().__init__()
-        self.index = index
-
-    def forward(self, x):
-        """
-        Forward pass.
-
-        Expects a list of tensors as input.
-        """
-        return x[self.index]

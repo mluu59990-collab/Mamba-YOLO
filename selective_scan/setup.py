@@ -37,7 +37,7 @@ def get_cuda_bare_metal_version(cuda_dir):
 
     return raw_output, bare_metal_version
 
-MODES = ["core"]
+MODES = ["core", "ndstate", "oflex"]
 # MODES = ["core", "ndstate", "oflex", "nrow"]
 
 def get_ext():
@@ -59,13 +59,10 @@ def get_ext():
         if bare_metal_version < Version("11.2"):
             multi_threads = False
             
-    # Build for the GPU actually attached to the Kaggle session (P100=60, T4=75).
-    if not torch.cuda.is_available():
-        raise RuntimeError("Enable a CUDA GPU before building selective scan")
-    major, minor = torch.cuda.get_device_capability()
-    arch = f"{major}{minor}"
-    cc_flag.extend(["-gencode", f"arch=compute_{arch},code=sm_{arch}"])
-    cc_flag.extend(["-gencode", f"arch=compute_{arch},code=compute_{arch}"])
+    cc_flag.extend(["-gencode", "arch=compute_70,code=sm_70"])
+    cc_flag.extend(["-gencode", "arch=compute_80,code=sm_80"])
+    if gencode_sm90:
+        cc_flag.extend(["-gencode", "arch=compute_90,code=sm_90"])
     if multi_threads:
         cc_flag.extend(["--threads", "4"])
 

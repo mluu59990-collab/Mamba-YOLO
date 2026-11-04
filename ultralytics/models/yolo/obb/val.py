@@ -1,4 +1,4 @@
-# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+# Ultralytics YOLO 🚀, AGPL-3.0 license
 
 from pathlib import Path
 
@@ -18,9 +18,9 @@ class OBBValidator(DetectionValidator):
         ```python
         from ultralytics.models.yolo.obb import OBBValidator
 
-        args = dict(model="yolov8n-obb.pt", data="dota8.yaml")
+        args = dict(model='yolov8n-obb.pt', data='dota8.yaml')
         validator = OBBValidator(args=args)
-        validator(model=args["model"])
+        validator(model=args['model'])
         ```
     """
 
@@ -45,36 +45,24 @@ class OBBValidator(DetectionValidator):
             labels=self.lb,
             nc=self.nc,
             multi_label=True,
-            agnostic=self.args.single_cls or self.args.agnostic_nms,
+            agnostic=self.args.single_cls,
             max_det=self.args.max_det,
             rotated=True,
         )
 
     def _process_batch(self, detections, gt_bboxes, gt_cls):
         """
-        Perform computation of the correct prediction matrix for a batch of detections and ground truth bounding boxes.
+        Return correct prediction matrix.
 
         Args:
-            detections (torch.Tensor): A tensor of shape (N, 7) representing the detected bounding boxes and associated
-                data. Each detection is represented as (x1, y1, x2, y2, conf, class, angle).
-            gt_bboxes (torch.Tensor): A tensor of shape (M, 5) representing the ground truth bounding boxes. Each box is
-                represented as (x1, y1, x2, y2, angle).
-            gt_cls (torch.Tensor): A tensor of shape (M,) representing class labels for the ground truth bounding boxes.
+            detections (torch.Tensor): Tensor of shape [N, 7] representing detections.
+                Each detection is of the format: x1, y1, x2, y2, conf, class, angle.
+            gt_bboxes (torch.Tensor): Tensor of shape [M, 5] representing rotated boxes.
+                Each box is of the format: x1, y1, x2, y2, angle.
+            labels (torch.Tensor): Tensor of shape [M] representing labels.
 
         Returns:
-            (torch.Tensor): The correct prediction matrix with shape (N, 10), which includes 10 IoU (Intersection over
-                Union) levels for each detection, indicating the accuracy of predictions compared to the ground truth.
-
-        Example:
-            ```python
-            detections = torch.rand(100, 7)  # 100 sample detections
-            gt_bboxes = torch.rand(50, 5)  # 50 sample ground truth boxes
-            gt_cls = torch.randint(0, 5, (50,))  # 50 ground truth class labels
-            correct_matrix = OBBValidator._process_batch(detections, gt_bboxes, gt_cls)
-            ```
-
-        Note:
-            This method relies on `batch_probiou` to calculate IoU between detections and ground truth bounding boxes.
+            (torch.Tensor): Correct prediction matrix of shape [N, 10] for 10 IoU levels.
         """
         iou = batch_probiou(gt_bboxes, torch.cat([detections[:, :4], detections[:, -1:]], dim=-1))
         return self.match_predictions(detections[:, 5], gt_cls, iou)
@@ -130,19 +118,13 @@ class OBBValidator(DetectionValidator):
 
     def save_one_txt(self, predn, save_conf, shape, file):
         """Save YOLO detections to a txt file in normalized coordinates in a specific format."""
-        import numpy as np
-
-        from ultralytics.engine.results import Results
-
-        rboxes = torch.cat([predn[:, :4], predn[:, -1:]], dim=-1)
-        # xywh, r, conf, cls
-        obb = torch.cat([rboxes, predn[:, 4:6]], dim=-1)
-        Results(
-            np.zeros((shape[0], shape[1]), dtype=np.uint8),
-            path=None,
-            names=self.names,
-            obb=obb,
-        ).save_txt(file, save_conf=save_conf)
+        gn = torch.tensor(shape)[[1, 0]]  # normalization gain whwh
+        for *xywh, conf, cls, angle in predn.tolist():
+            xywha = torch.tensor([*xywh, angle]).view(1, 5)
+            xyxyxyxy = (ops.xywhr2xyxyxyxy(xywha) / gn).view(-1).tolist()  # normalized xywh
+            line = (cls, *xyxyxyxy, conf) if save_conf else (cls, *xyxyxyxy)  # label format
+            with open(file, "a") as f:
+                f.write(("%g " * len(line)).rstrip() % line + "\n")
 
     def eval_json(self, stats):
         """Evaluates YOLO output in JSON format and returns performance statistics."""
@@ -160,10 +142,10 @@ class OBBValidator(DetectionValidator):
             for d in data:
                 image_id = d["image_id"]
                 score = d["score"]
-                classname = self.names[d["category_id"] - 1].replace(" ", "-")
+                classname = self.names[d["category_id"]].replace(" ", "-")
                 p = d["poly"]
 
-                with open(f"{pred_txt / f'Task1_{classname}'}.txt", "a") as f:
+                with open(f'{pred_txt / f"Task1_{classname}"}.txt', "a") as f:
                     f.writelines(f"{image_id} {score} {p[0]} {p[1]} {p[2]} {p[3]} {p[4]} {p[5]} {p[6]} {p[7]}\n")
             # Save merged results, this could result slightly lower map than using official merging script,
             # because of the probiou calculation.
@@ -175,7 +157,7 @@ class OBBValidator(DetectionValidator):
                 image_id = d["image_id"].split("__")[0]
                 pattern = re.compile(r"\d+___\d+")
                 x, y = (int(c) for c in re.findall(pattern, d["image_id"])[0].split("___"))
-                bbox, score, cls = d["rbox"], d["score"], d["category_id"] - 1
+                bbox, score, cls = d["rbox"], d["score"], d["category_id"]
                 bbox[0] += x
                 bbox[1] += y
                 bbox.extend([score, cls])
@@ -197,7 +179,7 @@ class OBBValidator(DetectionValidator):
                     p = [round(i, 3) for i in x[:-2]]  # poly
                     score = round(x[-2], 3)
 
-                    with open(f"{pred_merged_txt / f'Task1_{classname}'}.txt", "a") as f:
+                    with open(f'{pred_merged_txt / f"Task1_{classname}"}.txt', "a") as f:
                         f.writelines(f"{image_id} {score} {p[0]} {p[1]} {p[2]} {p[3]} {p[4]} {p[5]} {p[6]} {p[7]}\n")
 
         return stats

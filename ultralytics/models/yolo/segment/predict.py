@@ -1,4 +1,4 @@
-# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+# Ultralytics YOLO 🚀, AGPL-3.0 license
 
 from ultralytics.engine.results import Results
 from ultralytics.models.yolo.detect.predict import DetectionPredictor
@@ -14,7 +14,7 @@ class SegmentationPredictor(DetectionPredictor):
         from ultralytics.utils import ASSETS
         from ultralytics.models.yolo.segment import SegmentationPredictor
 
-        args = dict(model="yolov8n-seg.pt", source=ASSETS)
+        args = dict(model='yolov8n-seg.pt', source=ASSETS)
         predictor = SegmentationPredictor(overrides=args)
         predictor.predict_cli()
         ```
@@ -42,7 +42,9 @@ class SegmentationPredictor(DetectionPredictor):
 
         results = []
         proto = preds[1][-1] if isinstance(preds[1], tuple) else preds[1]  # tuple if PyTorch model or array if exported
-        for i, (pred, orig_img, img_path) in enumerate(zip(p, orig_imgs, self.batch[0])):
+        for i, pred in enumerate(p):
+            orig_img = orig_imgs[i]
+            img_path = self.batch[0][i]
             if not len(pred):  # save empty boxes
                 masks = None
             elif self.args.retina_masks:

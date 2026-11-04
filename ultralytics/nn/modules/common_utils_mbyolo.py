@@ -8,11 +8,24 @@ from einops import rearrange, repeat
 from timm.models.layers import DropPath
 
 DropPath.__repr__ = lambda self: f"timm.DropPath({self.drop_prob})"
-from .scan_reference import selective_scan_ref
 try:
     import selective_scan_cuda_core
-except ImportError:
-    selective_scan_cuda_core = None
+    import selective_scan_cuda_oflex
+    import selective_scan_cuda_ndstate
+    import selective_scan_cuda_nrow
+    import selective_scan_cuda
+except:
+    pass
+
+try:
+    "sscore acts the same as mamba_ssm"
+    import selective_scan_cuda_core
+except Exception as e:
+    print(e, flush=True)
+    "you should install mamba_ssm to use this"
+    SSMODE = "mamba_ssm"
+    import selective_scan_cuda
+    # from mamba_ssm.ops.selective_scan_interface import selective_scan_fn, selective_scan_ref
 
 
 class LayerNorm2d(nn.Module):
@@ -152,10 +165,6 @@ def cross_selective_scan(
     L = H * W
 
     def selective_scan(u, delta, A, B, C, D=None, delta_bias=None, delta_softplus=True):
-        if not u.is_cuda:
-            return selective_scan_ref(u, delta, A, B, C, D, delta_bias, delta_softplus)
-        if selective_scan_cuda_core is None:
-            raise RuntimeError("CUDA selective scan missing. Run: bash scripts/setup_kaggle.sh")
         return SelectiveScan.apply(u, delta, A, B, C, D, delta_bias, delta_softplus, nrows, backnrows, ssoflex)
 
     xs = CrossScan.apply(x)
@@ -190,17 +199,6 @@ def cross_selective_scan(
         y = out_norm(y.view(B, -1, H, W)).permute(0, 2, 3, 1)  # (B, H, W, C)
     else:  # (B, L, C)
         y = y.transpose(dim0=1, dim1=2).contiguous()  # (B, L, C)
-        # Validator converts the EMA model to half even when the S6 core runs
-        # in FP32. Compute LN in FP32 too, including half checkpoint parameters.
-        if isinstance(out_norm, nn.LayerNorm):
-            y = torch.nn.functional.layer_norm(
-                y.float(), out_norm.normalized_shape,
-                out_norm.weight.float() if out_norm.weight is not None else None,
-                out_norm.bias.float() if out_norm.bias is not None else None,
-                out_norm.eps,
-            )
-        else:
-            y = out_norm(y)
-        y = y.view(B, H, W, -1)
+        y = out_norm(y).view(B, H, W, -1)
 
     return (y.to(x.dtype) if to_dtype else y)

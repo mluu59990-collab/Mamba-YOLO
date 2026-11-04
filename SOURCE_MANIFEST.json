@@ -1,8 +1,0 @@
-{
-  "yolov12_commit": "64d5ffc6db35a1bde446689ab8450ecd43475e00",
-  "input_archive_sha256": {
-    "Mamba-YOLO-main.zip": "b3a2ad1419e52e9af301b83e17c4404b93fffe1165430a4c24b7abb07ae65a03",
-    "AKCMamba_YOLO-main.zip": "05b3abcf031dd61b3aaefe79bf4951d787c0c633a8bf52519b26cf84afa616f4",
-    "AKCMamba_YOLO-main/AKCMamba_YOLO.zip": "084cec2e3539cc279b03557d60a48b239bda9a0485de5cdecb030941d209f0da"
-  }
-}

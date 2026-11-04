@@ -1,14 +1,12 @@
-# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
-
-from copy import copy
+# Ultralytics YOLO 🚀, AGPL-3.0 license
 
 import torch
 
 from ultralytics.data import ClassificationDataset, build_dataloader
 from ultralytics.engine.trainer import BaseTrainer
 from ultralytics.models import yolo
-from ultralytics.nn.tasks import ClassificationModel
-from ultralytics.utils import DEFAULT_CFG, LOGGER, RANK
+from ultralytics.nn.tasks import ClassificationModel, attempt_load_one_weight
+from ultralytics.utils import DEFAULT_CFG, LOGGER, RANK, colorstr
 from ultralytics.utils.plotting import plot_images, plot_results
 from ultralytics.utils.torch_utils import is_parallel, strip_optimizer, torch_distributed_zero_first
 
@@ -24,7 +22,7 @@ class ClassificationTrainer(BaseTrainer):
         ```python
         from ultralytics.models.yolo.classify import ClassificationTrainer
 
-        args = dict(model="yolov8n-cls.pt", data="imagenet10", epochs=3)
+        args = dict(model='yolov8n-cls.pt', data='imagenet10', epochs=3)
         trainer = ClassificationTrainer(overrides=args)
         trainer.train()
         ```
@@ -62,14 +60,23 @@ class ClassificationTrainer(BaseTrainer):
         """Load, create or download model for any task."""
         import torchvision  # scope for faster 'import ultralytics'
 
-        if str(self.model) in torchvision.models.__dict__:
-            self.model = torchvision.models.__dict__[self.model](
-                weights="IMAGENET1K_V1" if self.args.pretrained else None
-            )
-            ckpt = None
+        if isinstance(self.model, torch.nn.Module):  # if model is loaded beforehand. No setup needed
+            return
+
+        model, ckpt = str(self.model), None
+        # Load a YOLO model locally, from torchvision, or from Ultralytics assets
+        if model.endswith(".pt"):
+            self.model, ckpt = attempt_load_one_weight(model, device="cpu")
+            for p in self.model.parameters():
+                p.requires_grad = True  # for training
+        elif model.split(".")[-1] in {"yaml", "yml"}:
+            self.model = self.get_model(cfg=model)
+        elif model in torchvision.models.__dict__:
+            self.model = torchvision.models.__dict__[model](weights="IMAGENET1K_V1" if self.args.pretrained else None)
         else:
-            ckpt = super().setup_model()
+            raise FileNotFoundError(f"ERROR: model={model} not found locally or online. Please check model name.")
         ClassificationModel.reshape_outputs(self.model, self.data["nc"])
+
         return ckpt
 
     def build_dataset(self, img_path, mode="train", batch=None):
@@ -109,9 +116,7 @@ class ClassificationTrainer(BaseTrainer):
     def get_validator(self):
         """Returns an instance of ClassificationValidator for validation."""
         self.loss_names = ["loss"]
-        return yolo.classify.ClassificationValidator(
-            self.test_loader, self.save_dir, args=copy(self.args), _callbacks=self.callbacks
-        )
+        return yolo.classify.ClassificationValidator(self.test_loader, self.save_dir, _callbacks=self.callbacks)
 
     def label_loss_items(self, loss_items=None, prefix="train"):
         """
@@ -141,6 +146,7 @@ class ClassificationTrainer(BaseTrainer):
                     self.metrics = self.validator(model=f)
                     self.metrics.pop("fitness", None)
                     self.run_callbacks("on_fit_epoch_end")
+        LOGGER.info(f"Results saved to {colorstr('bold', self.save_dir)}")
 
     def plot_training_samples(self, batch, ni):
         """Plots training samples with their annotations."""

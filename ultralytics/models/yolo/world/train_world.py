@@ -1,4 +1,4 @@
-# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+# Ultralytics YOLO 🚀, AGPL-3.0 license
 
 from ultralytics.data import YOLOConcatDataset, build_grounding, build_yolo_dataset
 from ultralytics.data.utils import check_det_dataset
@@ -72,8 +72,8 @@ class WorldTrainerFromScratch(WorldTrainer):
         """
         final_data = {}
         data_yaml = self.args.data
-        assert data_yaml.get("train", False), "train dataset not found"  # object365.yaml
-        assert data_yaml.get("val", False), "validation dataset not found"  # lvis.yaml
+        assert data_yaml.get("train", False)  # object365.yaml
+        assert data_yaml.get("val", False)  # lvis.yaml
         data = {k: [check_det_dataset(d) for d in v.get("yolo_data", [])] for k, v in data_yaml.items()}
         assert len(data["val"]) == 1, f"Only support validating on 1 dataset for now, but got {len(data['val'])}."
         val_split = "minival" if "lvis" in data["val"][0]["val"] else "val"

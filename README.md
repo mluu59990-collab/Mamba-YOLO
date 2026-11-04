@@ -1,47 +1,98 @@
-# Mamba-YOLO: YOLOv12s + MAMBA trên Kaggle
+# [AAAI2025] Mamba YOLO: A Simple Baseline for Object Detection with State Space Model
+Zeyu Wang, Chen Li, Huiying Xu, Xinzhong Zhu, Hongbo Li
 
-Repo dành riêng cho **mamba**, chuyển ý tưởng tác giả lên nền **YOLOv12s** theo yêu cầu. Đây là biến thể nghiên cứu, không phải repo chính thức hay tái lập nguyên kiến trúc/kết quả paper. Giữ C3k2/A2C2f và Detect của YOLOv12s; thêm VSSBlock ở backbone, XSSBlock ở neck (SS2D, LSBlock, RGBlock).
 
-## Chạy với dữ liệu của bạn
+![Python 3.11](https://img.shields.io/badge/python-3.11-g) ![pytorch 2.3.0](https://img.shields.io/badge/pytorch-2.3.0-blue.svg) [![docs](https://img.shields.io/badge/docs-latest-blue)](README.md)
 
-1. Tải [notebook Kaggle](notebooks/kaggle_train.ipynb), Import Notebook vào Kaggle.
-2. Bật Internet và GPU; Add Input dataset ở định dạng YOLO detection.
-3. Notebook đã có URL clone đúng repo này. Chạy cell setup để cài dependency, build CUDA và kiểm thử.
-4. Sửa DATA_ROOT, TRAIN, VAL và NAMES trong cell dataset.
-5. Chạy cell train. Mặc định 300 epochs, ảnh 640, batch 4, một GPU. Nếu OOM giảm batch 2 hoặc 1.
-6. Save Version kèm outputs để giữ checkpoint cho phiên sau.
+
+<div align="center">
+  <img src="./asserts/mambayolo.jpg" width="1200px"/>
+</div>
+
+## Model Zoo
+
+We've pre-trained Mamba YOLO-T/B/L from scratch and evaluate on the `MSCOCO2017 val`. 
+
+### Inference on MSCOCO2017 dataset
+
+
+| model | Params| FLOPs | ${AP}^{val}$ | ${AP}_{{50}}^{val}$ | ${AP}_{{75}}^{val}$ | ${AP}_{{S}}^{val}$ | ${AP}_{{M}}^{val}$ | ${AP}_{{L}}^{val}$ |
+| :------------------------------------------------------------------------------------------------------------------- | :------------------- | :----------------- | :--------------: | :------------: | :------------: | :------------: | :-------------: | :------------: |
+| [Mamba YOLO-T](./ultralytics/cfg/models/mamba-yolo/Mamba-YOLO-T.yaml) | 5.8M | 13.2G |       44.5       |          61.2           |          48.2           |          24.7          |          48.8          |          62.0          |
+| [Mamba YOLO-B](./ultralytics/cfg/models/mamba-yolo/Mamba-YOLO-B.yaml) | 19.1M | 45.4G  |       49.1       |          66.5           |          53.5           |          30.6          |          54.0          |          66.4          |
+| [Mamba YOLO-L](./ultralytics/cfg/models/mamba-yolo/Mamba-YOLO-L.yaml)  | 57.6M | 156.2G |       52.1       |          69.8           |          56.5           |          34.1          |          57.3          |          68.1          |
+
+
+
+
+## Getting started
+
+### 1. Installation
+
+Mamba YOLO is developed based on `torch==2.3.0` `pytorch-cuda==12.1` and `CUDA Version==12.6`. 
+
+#### 2.Clone Project 
 
 ```bash
-git clone https://github.com/mluu59990-collab/Mamba-YOLO.git
-cd Mamba-YOLO
-bash scripts/setup_kaggle.sh
-python train.py --data /kaggle/working/custom-data.yaml --epochs 300 --batch 4 --device 0
+git clone https://github.com/HZAI-ZJNU/Mamba-YOLO.git
 ```
 
-## Cấu hình tác giả và các điều chỉnh
+#### 3.Create and activate a conda environment.
+```bash
+conda create -n mambayolo -y python=3.11
+conda activate mambayolo
+```
 
-- `--profile author` (mặc định): 300 epochs. LR giảm tuyến tính từ 0.01 đến 0.0001 (lrf=0.01), close_mosaic=10 theo source Mamba-YOLO.
-- SGD, momentum=0.937, weight_decay=0.0005, warmup 3 epochs (bias LR=0.1, momentum=0.8), box/cls/DFL=7.5/0.5/1.5, HSV=0.015/0.7/0.4, mosaic=1.0.
-- Batch 4, GPU 0 và workers 2 là điều chỉnh cho Kaggle. Launcher Mamba gốc mặc định batch 512; 300 epochs/SGD lấy từ launcher, lịch LR lấy từ default.yaml, không khẳng định đây là toàn bộ recipe thực nghiệm trong paper.
-- `--profile kaggle` rút còn 100 epochs, không thay lịch LR nói trên. `--epochs`/`--batch` ghi đè rõ ràng.
-- Train từ đầu, không tự tải pretrained. Không nạp trực tiếp yolov12s.pt vào hybrid vì index layer đã thay đổi.
-- `--variant baseline` chạy đối chứng YOLOv12s cùng recipe. Repo này chỉ cung cấp baseline và mamba.
-- Các lớp dùng chung từ bộ tích hợp vẫn có trong source để giữ checkpoint/import ổn định; config và notebook chỉ chọn bản của repo này.
-
-## Resume / validation
+#### 4. Install torch
 
 ```bash
-python train.py --resume /kaggle/input/PREVIOUS_RUN/last.pt --data /kaggle/working/custom-data.yaml
-python train.py --task val --weights runs/mamba/weights/best.pt --data /kaggle/working/custom-data.yaml
+pip3 install torch===2.3.0 torchvision torchaudio
 ```
 
-Resume phục hồi optimizer/scheduler cho run chưa hoàn tất. Đường dẫn data mới được truyền rõ nếu mount dataset thay đổi. Xem đường dẫn run thực tế vì framework tăng hậu tố khi tên trùng.
+#### 5. Install Dependencies
+```bash
+pip install seaborn thop timm einops
+cd selective_scan && pip install . && cd ..
+pip install -v -e .
+```
 
-## Kiểm chứng và nguồn
+#### 6. Prepare MSCOCO2017 Dataset
+Make sure your dataset structure as follows:
+```
+├── coco
+│   ├── annotations
+│   │   ├── instances_train2017.json
+│   │   └── instances_val2017.json
+│   ├── images
+│   │   ├── train2017
+│   │   └── val2017
+│   ├── labels
+│   │   ├── train2017
+│   │   ├── val2017
+```
 
-Đã kiểm tra CPU forward/loss/backward và lưu/nạp checkpoint. Chưa xác minh CUDA/Kaggle, mAP dataset thật hoặc tốc độ. Setup chạy kiểm tra GPU trước train; không có cam kết tăng độ chính xác hay real-time.
+#### 7. Training Mamba-YOLO-T
+```bash
+python mbyolo_train.py --task train --data ultralytics/cfg/datasets/coco.yaml \
+ --config ultralytics/cfg/models/mamba-yolo/Mamba-YOLO-T.yaml \
+--amp  --project ./output_dir/mscoco --name mambayolo_n
+```
 
-- [Kiểm tra ban đầu](VALIDATION.md) (bộ tích hợp trước khi tách repo)
-- [Audit nguồn](AUDIT.md)
-- [Nguồn và giấy phép](THIRD_PARTY.md), [LICENSE](LICENSE)
-- [Chi tiết triển khai chung](IMPLEMENTATION.md) (tài liệu bộ tích hợp ban đầu; cấu hình chạy của repo riêng được xác định bởi README này và train.py)
+## Acknowledgement
+
+This repo is modified from open source real-time object detection codebase [Ultralytics](https://github.com/ultralytics/ultralytics). The selective-scan from [VMamba](https://github.com/MzeroMiko/VMamba).
+
+## Citations
+If you find [Mamba-YOLO](https://github.com/HZAI-ZJNU/Mamba-YOLO) is useful in your research or applications, please consider giving us a star 🌟 and citing it.
+
+```bibtex
+@inproceedings{wang2025mamba,
+  title={Mamba yolo: A simple baseline for object detection with state space model},
+  author={Wang, Zeyu and Li, Chen and Xu, Huiying and Zhu, Xinzhong and Li, Hongbo},
+  booktitle={Proceedings of the AAAI conference on artificial intelligence},
+  volume={39},
+  number={8},
+  pages={8205--8213},
+  year={2025}
+}
+```

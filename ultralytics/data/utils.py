@@ -1,5 +1,6 @@
-# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+# Ultralytics YOLO 🚀, AGPL-3.0 license
 
+import contextlib
 import hashlib
 import json
 import os
@@ -21,7 +22,7 @@ from ultralytics.utils import (
     LOGGER,
     NUM_THREADS,
     ROOT,
-    SETTINGS_FILE,
+    SETTINGS_YAML,
     TQDM,
     clean_url,
     colorstr,
@@ -35,7 +36,7 @@ from ultralytics.utils.downloads import download, safe_download, unzip_file
 from ultralytics.utils.ops import segments2boxes
 
 HELP_URL = "See https://docs.ultralytics.com/datasets for dataset formatting guidance."
-IMG_FORMATS = {"bmp", "dng", "jpeg", "jpg", "mpo", "png", "tif", "tiff", "webp", "pfm", "heic"}  # image suffixes
+IMG_FORMATS = {"bmp", "dng", "jpeg", "jpg", "mpo", "png", "tif", "tiff", "webp", "pfm"}  # image suffixes
 VID_FORMATS = {"asf", "avi", "gif", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "ts", "wmv", "webm"}  # video suffixes
 PIN_MEMORY = str(os.getenv("PIN_MEMORY", True)).lower() == "true"  # global pin_memory for dataloaders
 FORMATS_HELP_MSG = f"Supported formats are:\nimages: {IMG_FORMATS}\nvideos: {VID_FORMATS}"
@@ -59,13 +60,12 @@ def exif_size(img: Image.Image):
     """Returns exif-corrected PIL size."""
     s = img.size  # (width, height)
     if img.format == "JPEG":  # only support JPEG images
-        try:
-            if exif := img.getexif():
+        with contextlib.suppress(Exception):
+            exif = img.getexif()
+            if exif:
                 rotation = exif.get(274, None)  # the EXIF key for the orientation tag is 274
                 if rotation in {6, 8}:  # rotation 270 or 90
                     s = s[1], s[0]
-        except Exception:
-            pass
     return s
 
 
@@ -124,7 +124,8 @@ def verify_image_label(args):
                     segments = [np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in lb]  # (cls, xy1...)
                     lb = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)  # (cls, xywh)
                 lb = np.array(lb, dtype=np.float32)
-            if nl := len(lb):
+            nl = len(lb)
+            if nl:
                 if keypoint:
                     assert lb.shape[1] == (5 + nkpt * ndim), f"labels require {(5 + nkpt * ndim)} columns each"
                     points = lb[:, 5:].reshape(-1, ndim)[:, :2]
@@ -163,55 +164,6 @@ def verify_image_label(args):
         nc = 1
         msg = f"{prefix}WARNING ⚠️ {im_file}: ignoring corrupt image/label: {e}"
         return [None, None, None, None, None, nm, nf, ne, nc, msg]
-
-
-def visualize_image_annotations(image_path, txt_path, label_map):
-    """
-    Visualizes YOLO annotations (bounding boxes and class labels) on an image.
-
-    This function reads an image and its corresponding annotation file in YOLO format, then
-    draws bounding boxes around detected objects and labels them with their respective class names.
-    The bounding box colors are assigned based on the class ID, and the text color is dynamically
-    adjusted for readability, depending on the background color's luminance.
-
-    Args:
-        image_path (str): The path to the image file to annotate, and it can be in formats supported by PIL (e.g., .jpg, .png).
-        txt_path (str): The path to the annotation file in YOLO format, that should contain one line per object with:
-                        - class_id (int): The class index.
-                        - x_center (float): The X center of the bounding box (relative to image width).
-                        - y_center (float): The Y center of the bounding box (relative to image height).
-                        - width (float): The width of the bounding box (relative to image width).
-                        - height (float): The height of the bounding box (relative to image height).
-        label_map (dict): A dictionary that maps class IDs (integers) to class labels (strings).
-
-    Example:
-        >>> label_map = {0: "cat", 1: "dog", 2: "bird"}  # It should include all annotated classes details
-        >>> visualize_image_annotations("path/to/image.jpg", "path/to/annotations.txt", label_map)
-    """
-    import matplotlib.pyplot as plt
-
-    from ultralytics.utils.plotting import colors
-
-    img = np.array(Image.open(image_path))
-    img_height, img_width = img.shape[:2]
-    annotations = []
-    with open(txt_path) as file:
-        for line in file:
-            class_id, x_center, y_center, width, height = map(float, line.split())
-            x = (x_center - width / 2) * img_width
-            y = (y_center - height / 2) * img_height
-            w = width * img_width
-            h = height * img_height
-            annotations.append((x, y, w, h, int(class_id)))
-    fig, ax = plt.subplots(1)  # Plot the image and annotations
-    for x, y, w, h, label in annotations:
-        color = tuple(c / 255 for c in colors(label, True))  # Get and normalize the RGB color
-        rect = plt.Rectangle((x, y), w, h, linewidth=2, edgecolor=color, facecolor="none")  # Create a rectangle
-        ax.add_patch(rect)
-        luminance = 0.2126 * color[0] + 0.7152 * color[1] + 0.0722 * color[2]  # Formula for luminance
-        ax.text(x, y - 5, label_map[label], color="white" if luminance < 0.5 else "black", backgroundcolor=color)
-    ax.imshow(img)
-    plt.show()
 
 
 def polygon2mask(imgsz, polygons, color=1, downsample_ratio=1):
@@ -264,7 +216,7 @@ def polygons2masks_overlap(imgsz, segments, downsample_ratio=1):
     ms = []
     for si in range(len(segments)):
         mask = polygon2mask(imgsz, [segments[si].reshape(-1)], downsample_ratio=downsample_ratio, color=1)
-        ms.append(mask.astype(masks.dtype))
+        ms.append(mask)
         areas.append(mask.sum())
     areas = np.asarray(areas)
     index = np.argsort(-areas)
@@ -313,6 +265,7 @@ def check_det_dataset(dataset, autodownload=True):
     Returns:
         (dict): Parsed dataset information and paths.
     """
+
     file = check_file(dataset)
 
     # Download (optional)
@@ -372,7 +325,7 @@ def check_det_dataset(dataset, autodownload=True):
             if s and autodownload:
                 LOGGER.warning(m)
             else:
-                m += f"\nNote dataset download directory is '{DATASETS_DIR}'. You can update this in '{SETTINGS_FILE}'"
+                m += f"\nNote dataset download directory is '{DATASETS_DIR}'. You can update this in '{SETTINGS_YAML}'"
                 raise FileNotFoundError(m)
             t = time.time()
             r = None  # success
@@ -410,6 +363,7 @@ def check_cls_dataset(dataset, split=""):
             - 'nc' (int): The number of classes in the dataset.
             - 'names' (dict): A dictionary of class names in the dataset.
     """
+
     # Download (optional if dataset=https://file.zip is passed directly)
     if str(dataset).startswith(("http:/", "https:/")):
         dataset = safe_download(dataset, dir=DATASETS_DIR, unzip=True, delete=False)
@@ -425,7 +379,7 @@ def check_cls_dataset(dataset, split=""):
         if str(dataset) == "imagenet":
             subprocess.run(f"bash {ROOT / 'data/scripts/get_imagenet.sh'}", shell=True, check=True)
         else:
-            url = f"https://github.com/ultralytics/assets/releases/download/v0.0.0/{dataset}.zip"
+            url = f"https://github.com/ultralytics/yolov5/releases/download/v1.0/{dataset}.zip"
             download(url, dir=data_dir.parent)
         s = f"Dataset download success ✅ ({time.time() - t:.1f}s), saved to {colorstr('bold', data_dir)}\n"
         LOGGER.info(s)
@@ -449,7 +403,7 @@ def check_cls_dataset(dataset, split=""):
 
     # Print to console
     for k, v in {"train": train_set, "val": val_set, "test": test_set}.items():
-        prefix = f"{colorstr(f'{k}:')} {v}..."
+        prefix = f'{colorstr(f"{k}:")} {v}...'
         if v is None:
             LOGGER.info(prefix)
         else:
@@ -484,11 +438,11 @@ class HUBDatasetStats:
         ```python
         from ultralytics.data.utils import HUBDatasetStats
 
-        stats = HUBDatasetStats("path/to/coco8.zip", task="detect")  # detect dataset
-        stats = HUBDatasetStats("path/to/coco8-seg.zip", task="segment")  # segment dataset
-        stats = HUBDatasetStats("path/to/coco8-pose.zip", task="pose")  # pose dataset
-        stats = HUBDatasetStats("path/to/dota8.zip", task="obb")  # OBB dataset
-        stats = HUBDatasetStats("path/to/imagenet10.zip", task="classify")  # classification dataset
+        stats = HUBDatasetStats('path/to/coco8.zip', task='detect')  # detect dataset
+        stats = HUBDatasetStats('path/to/coco8-seg.zip', task='segment')  # segment dataset
+        stats = HUBDatasetStats('path/to/coco8-pose.zip', task='pose')  # pose dataset
+        stats = HUBDatasetStats('path/to/dota8.zip', task='obb')  # OBB dataset
+        stats = HUBDatasetStats('path/to/imagenet10.zip', task='classify')  # classification dataset
 
         stats.get_json(save=True)
         stats.process_images()
@@ -500,12 +454,12 @@ class HUBDatasetStats:
         path = Path(path).resolve()
         LOGGER.info(f"Starting HUB dataset checks for {path}....")
 
-        self.task = task  # detect, segment, pose, classify, obb
+        self.task = task  # detect, segment, pose, classify
         if self.task == "classify":
             unzip_dir = unzip_file(path)
             data = check_cls_dataset(unzip_dir)
             data["path"] = unzip_dir
-        else:  # detect, segment, pose, obb
+        else:  # detect, segment, pose
             _, data_dir, yaml_path = self._unzip(Path(path))
             try:
                 # Load YAML with checks
@@ -517,7 +471,7 @@ class HUBDatasetStats:
             except Exception as e:
                 raise Exception("error/HUB/dataset_stats/init") from e
 
-        self.hub_dir = Path(f"{data['path']}-hub")
+        self.hub_dir = Path(f'{data["path"]}-hub')
         self.im_dir = self.hub_dir / "images"
         self.stats = {"nc": len(data["names"]), "names": list(data["names"].values())}  # statistics dictionary
         self.data = data
@@ -529,7 +483,7 @@ class HUBDatasetStats:
             return False, None, path
         unzip_dir = unzip_file(path, path=path.parent)
         assert unzip_dir.is_dir(), (
-            f"Error unzipping {path}, {unzip_dir} not found. path/to/abc.zip MUST unzip to path/to/abc/"
+            f"Error unzipping {path}, {unzip_dir} not found. " f"path/to/abc.zip MUST unzip to path/to/abc/"
         )
         return True, str(unzip_dir), find_dataset_yaml(unzip_dir)  # zipped, data_dir, yaml_path
 
@@ -567,7 +521,7 @@ class HUBDatasetStats:
 
             # Get dataset statistics
             if self.task == "classify":
-                from torchvision.datasets import ImageFolder  # scope for faster 'import ultralytics'
+                from torchvision.datasets import ImageFolder
 
                 dataset = ImageFolder(self.data[split])
 
@@ -644,10 +598,11 @@ def compress_one_image(f, f_new=None, max_dim=1920, quality=50):
         from pathlib import Path
         from ultralytics.data.utils import compress_one_image
 
-        for f in Path("path/to/dataset").rglob("*.jpg"):
+        for f in Path('path/to/dataset').rglob('*.jpg'):
             compress_one_image(f)
         ```
     """
+
     try:  # use PIL
         im = Image.open(f)
         r = max_dim / max(im.height, im.width)  # ratio
@@ -680,6 +635,7 @@ def autosplit(path=DATASETS_DIR / "coco8/images", weights=(0.9, 0.1, 0.0), annot
         autosplit()
         ```
     """
+
     path = Path(path)  # images dir
     files = sorted(x for x in path.rglob("*.*") if x.suffix[1:].lower() in IMG_FORMATS)  # image files only
     n = len(files)  # number of files

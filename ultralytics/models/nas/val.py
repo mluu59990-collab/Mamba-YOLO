@@ -1,4 +1,4 @@
-# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+# Ultralytics YOLO 🚀, AGPL-3.0 license
 
 import torch
 
@@ -24,7 +24,7 @@ class NASValidator(DetectionValidator):
         ```python
         from ultralytics import NAS
 
-        model = NAS("yolo_nas_s")
+        model = NAS('yolo_nas_s')
         validator = model.validator
         # Assumes that raw_preds are available
         final_preds = validator.postprocess(raw_preds)
@@ -44,7 +44,7 @@ class NASValidator(DetectionValidator):
             self.args.iou,
             labels=self.lb,
             multi_label=False,
-            agnostic=self.args.single_cls or self.args.agnostic_nms,
+            agnostic=self.args.single_cls,
             max_det=self.args.max_det,
             max_time_img=0.5,
         )

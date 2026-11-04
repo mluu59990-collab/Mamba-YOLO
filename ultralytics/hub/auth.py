@@ -1,4 +1,4 @@
-# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+# Ultralytics YOLO 🚀, AGPL-3.0 license
 
 import requests
 
@@ -27,14 +27,10 @@ class Auth:
 
     def __init__(self, api_key="", verbose=False):
         """
-        Initialize Auth class and authenticate user.
-
-        Handles API key validation, Google Colab authentication, and new key requests. Updates SETTINGS upon successful
-        authentication.
+        Initialize the Auth class with an optional API key.
 
         Args:
-            api_key (str): API key or combined key_id format.
-            verbose (bool): Enable verbose logging.
+            api_key (str, optional): May be an API key or a combination API key and model ID, i.e. key_id
         """
         # Split the input API key in case it contains a combined key_model and keep only the API key part
         api_key = api_key.split("_")[0]
@@ -68,7 +64,7 @@ class Auth:
             if verbose:
                 LOGGER.info(f"{PREFIX}New authentication successful ✅")
         elif verbose:
-            LOGGER.info(f"{PREFIX}Get API key from {API_KEY_URL} and then run 'yolo login API_KEY'")
+            LOGGER.info(f"{PREFIX}Get API key from {API_KEY_URL} and then run 'yolo hub login API_KEY'")
 
     def request_api_key(self, max_attempts=3):
         """

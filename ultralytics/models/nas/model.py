@@ -1,4 +1,4 @@
-# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+# Ultralytics YOLO 🚀, AGPL-3.0 license
 """
 YOLO-NAS model interface.
 
@@ -6,8 +6,8 @@ Example:
     ```python
     from ultralytics import NAS
 
-    model = NAS("yolo_nas_s")
-    results = model.predict("ultralytics/assets/bus.jpg")
+    model = NAS('yolo_nas_s')
+    results = model.predict('ultralytics/assets/bus.jpg')
     ```
 """
 
@@ -16,8 +16,7 @@ from pathlib import Path
 import torch
 
 from ultralytics.engine.model import Model
-from ultralytics.utils.downloads import attempt_download_asset
-from ultralytics.utils.torch_utils import model_info
+from ultralytics.utils.torch_utils import model_info, smart_inference_mode
 
 from .predict import NASPredictor
 from .val import NASValidator
@@ -34,8 +33,8 @@ class NAS(Model):
         ```python
         from ultralytics import NAS
 
-        model = NAS("yolo_nas_s")
-        results = model.predict("ultralytics/assets/bus.jpg")
+        model = NAS('yolo_nas_s')
+        results = model.predict('ultralytics/assets/bus.jpg')
         ```
 
     Attributes:
@@ -50,25 +49,16 @@ class NAS(Model):
         assert Path(model).suffix not in {".yaml", ".yml"}, "YOLO-NAS models only support pre-trained models."
         super().__init__(model, task="detect")
 
-    def _load(self, weights: str, task=None) -> None:
+    @smart_inference_mode()
+    def _load(self, weights: str, task: str):
         """Loads an existing NAS model weights or creates a new NAS model with pretrained weights if not provided."""
         import super_gradients
 
         suffix = Path(weights).suffix
         if suffix == ".pt":
-            self.model = torch.load(attempt_download_asset(weights))
-
+            self.model = torch.load(weights)
         elif suffix == "":
             self.model = super_gradients.training.models.get(weights, pretrained_weights="coco")
-
-        # Override the forward method to ignore additional arguments
-        def new_forward(x, *args, **kwargs):
-            """Ignore additional __call__ arguments."""
-            return self.model._original_forward(x)
-
-        self.model._original_forward = self.model.forward
-        self.model.forward = new_forward
-
         # Standardize model
         self.model.fuse = lambda verbose=True: self.model
         self.model.stride = torch.tensor([32])

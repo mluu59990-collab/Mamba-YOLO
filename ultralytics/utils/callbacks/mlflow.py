@@ -1,4 +1,4 @@
-# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+# Ultralytics YOLO 🚀, AGPL-3.0 license
 """
 MLflow Logging for Ultralytics YOLO.
 
@@ -34,14 +34,10 @@ try:
     from pathlib import Path
 
     PREFIX = colorstr("MLflow: ")
+    SANITIZE = lambda x: {k.replace("(", "").replace(")", ""): float(v) for k, v in x.items()}
 
 except (ImportError, AssertionError):
     mlflow = None
-
-
-def sanitize_dict(x):
-    """Sanitize dictionary keys by removing parentheses and converting values to floats."""
-    return {k.replace("(", "").replace(")", ""): float(v) for k, v in x.items()}
 
 
 def on_pretrain_routine_end(trainer):
@@ -71,7 +67,7 @@ def on_pretrain_routine_end(trainer):
     mlflow.set_tracking_uri(uri)
 
     # Set experiment and run names
-    experiment_name = os.environ.get("MLFLOW_EXPERIMENT_NAME") or trainer.args.project or "/Shared/Ultralytics"
+    experiment_name = os.environ.get("MLFLOW_EXPERIMENT_NAME") or trainer.args.project or "/Shared/YOLOv8"
     run_name = os.environ.get("MLFLOW_RUN") or trainer.args.name
     mlflow.set_experiment(experiment_name)
 
@@ -84,7 +80,7 @@ def on_pretrain_routine_end(trainer):
         LOGGER.info(f"{PREFIX}disable with 'yolo settings mlflow=False'")
         mlflow.log_params(dict(trainer.args))
     except Exception as e:
-        LOGGER.warning(f"{PREFIX}WARNING ⚠️ Failed to initialize: {e}\n{PREFIX}WARNING ⚠️ Not tracking this run")
+        LOGGER.warning(f"{PREFIX}WARNING ⚠️ Failed to initialize: {e}\n" f"{PREFIX}WARNING ⚠️ Not tracking this run")
 
 
 def on_train_epoch_end(trainer):
@@ -92,8 +88,8 @@ def on_train_epoch_end(trainer):
     if mlflow:
         mlflow.log_metrics(
             metrics={
-                **sanitize_dict(trainer.lr),
-                **sanitize_dict(trainer.label_loss_items(trainer.tloss, prefix="train")),
+                **SANITIZE(trainer.lr),
+                **SANITIZE(trainer.label_loss_items(trainer.tloss, prefix="train")),
             },
             step=trainer.epoch,
         )
@@ -102,7 +98,7 @@ def on_train_epoch_end(trainer):
 def on_fit_epoch_end(trainer):
     """Log training metrics at the end of each fit epoch to MLflow."""
     if mlflow:
-        mlflow.log_metrics(metrics=sanitize_dict(trainer.metrics), step=trainer.epoch)
+        mlflow.log_metrics(metrics=SANITIZE(trainer.metrics), step=trainer.epoch)
 
 
 def on_train_end(trainer):

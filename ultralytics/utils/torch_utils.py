@@ -1,4 +1,4 @@
-# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+# Ultralytics YOLO 🚀, AGPL-3.0 license
 
 import gc
 import math
@@ -7,12 +7,10 @@ import random
 import time
 from contextlib import contextmanager
 from copy import deepcopy
-from datetime import datetime
 from pathlib import Path
 from typing import Union
 
 import numpy as np
-import thop
 import torch
 import torch.distributed as dist
 import torch.nn as nn
@@ -22,41 +20,36 @@ from ultralytics.utils import (
     DEFAULT_CFG_DICT,
     DEFAULT_CFG_KEYS,
     LOGGER,
-    NUM_THREADS,
     PYTHON_VERSION,
     TORCHVISION_VERSION,
-    WINDOWS,
     __version__,
     colorstr,
 )
 from ultralytics.utils.checks import check_version
 
+try:
+    import thop
+except ImportError:
+    thop = None
+
 # Version checks (all default to version>=min_version)
 TORCH_1_9 = check_version(torch.__version__, "1.9.0")
 TORCH_1_13 = check_version(torch.__version__, "1.13.0")
 TORCH_2_0 = check_version(torch.__version__, "2.0.0")
-TORCH_2_4 = check_version(torch.__version__, "2.4.0")
 TORCHVISION_0_10 = check_version(TORCHVISION_VERSION, "0.10.0")
 TORCHVISION_0_11 = check_version(TORCHVISION_VERSION, "0.11.0")
 TORCHVISION_0_13 = check_version(TORCHVISION_VERSION, "0.13.0")
-TORCHVISION_0_18 = check_version(TORCHVISION_VERSION, "0.18.0")
-if WINDOWS and check_version(torch.__version__, "==2.4.0"):  # reject version 2.4.0 on Windows
-    LOGGER.warning(
-        "WARNING ⚠️ Known issue with torch==2.4.0 on Windows with CPU, recommend upgrading to torch>=2.4.1 to resolve "
-        "https://github.com/ultralytics/ultralytics/issues/15049"
-    )
 
 
 @contextmanager
 def torch_distributed_zero_first(local_rank: int):
-    """Ensures all processes in distributed training wait for the local master (rank 0) to complete a task first."""
-    initialized = dist.is_available() and dist.is_initialized()
-
+    """Decorator to make all processes in distributed training wait for each local_master to do something."""
+    initialized = torch.distributed.is_available() and torch.distributed.is_initialized()
     if initialized and local_rank not in {-1, 0}:
         dist.barrier(device_ids=[local_rank])
     yield
     if initialized and local_rank == 0:
-        dist.barrier(device_ids=[local_rank])
+        dist.barrier(device_ids=[0])
 
 
 def smart_inference_mode():
@@ -72,58 +65,14 @@ def smart_inference_mode():
     return decorate
 
 
-def autocast(enabled: bool, device: str = "cuda"):
-    """
-    Get the appropriate autocast context manager based on PyTorch version and AMP setting.
-
-    This function returns a context manager for automatic mixed precision (AMP) training that is compatible with both
-    older and newer versions of PyTorch. It handles the differences in the autocast API between PyTorch versions.
-
-    Args:
-        enabled (bool): Whether to enable automatic mixed precision.
-        device (str, optional): The device to use for autocast. Defaults to 'cuda'.
-
-    Returns:
-        (torch.amp.autocast): The appropriate autocast context manager.
-
-    Note:
-        - For PyTorch versions 1.13 and newer, it uses `torch.amp.autocast`.
-        - For older versions, it uses `torch.cuda.autocast`.
-
-    Example:
-        ```python
-        with autocast(amp=True):
-            # Your mixed precision operations here
-            pass
-        ```
-    """
-    if TORCH_1_13:
-        return torch.amp.autocast(device, enabled=enabled)
-    else:
-        return torch.cuda.amp.autocast(enabled)
-
-
 def get_cpu_info():
     """Return a string with system CPU information, i.e. 'Apple M2'."""
-    from ultralytics.utils import PERSISTENT_CACHE  # avoid circular import error
+    import cpuinfo  # pip install py-cpuinfo
 
-    if "cpu_info" not in PERSISTENT_CACHE:
-        try:
-            import cpuinfo  # pip install py-cpuinfo
-
-            k = "brand_raw", "hardware_raw", "arch_string_raw"  # keys sorted by preference
-            info = cpuinfo.get_cpu_info()  # info dict
-            string = info.get(k[0] if k[0] in info else k[1] if k[1] in info else k[2], "unknown")
-            PERSISTENT_CACHE["cpu_info"] = string.replace("(R)", "").replace("CPU ", "").replace("@ ", "")
-        except Exception:
-            pass
-    return PERSISTENT_CACHE.get("cpu_info", "unknown")
-
-
-def get_gpu_info(index):
-    """Return a string with system GPU information, i.e. 'Tesla T4, 15102MiB'."""
-    properties = torch.cuda.get_device_properties(index)
-    return f"{properties.name}, {properties.total_memory / (1 << 20):.0f}MiB"
+    k = "brand_raw", "hardware_raw", "arch_string_raw"  # info keys sorted by preference (not all keys always available)
+    info = cpuinfo.get_cpu_info()  # info dict
+    string = info.get(k[0] if k[0] in info else k[1] if k[1] in info else k[2], "unknown")
+    return string.replace("(R)", "").replace("CPU ", "").replace("@ ", "")
 
 
 def select_device(device="", batch=0, newline=False, verbose=True):
@@ -150,19 +99,20 @@ def select_device(device="", batch=0, newline=False, verbose=True):
             devices when using multiple GPUs.
 
     Examples:
-        >>> select_device("cuda:0")
+        >>> select_device('cuda:0')
         device(type='cuda', index=0)
 
-        >>> select_device("cpu")
+        >>> select_device('cpu')
         device(type='cpu')
 
     Note:
         Sets the 'CUDA_VISIBLE_DEVICES' environment variable for specifying which GPUs to use.
     """
-    if isinstance(device, torch.device) or str(device).startswith("tpu"):
+
+    if isinstance(device, torch.device):
         return device
 
-    s = f"Ultralytics {__version__} 🚀 Python-{PYTHON_VERSION} torch-{torch.__version__} "
+    s = f"Ultralytics YOLOv{__version__} 🚀 Python-{PYTHON_VERSION} torch-{torch.__version__} "
     device = str(device).lower()
     for remove in "cuda:", "none", "(", ")", "[", "]", "'", " ":
         device = device.replace(remove, "")  # to string, 'cuda:0' -> '0' and '(0, 1)' -> '0,1'
@@ -173,8 +123,6 @@ def select_device(device="", batch=0, newline=False, verbose=True):
     elif device:  # non-cpu device requested
         if device == "cuda":
             device = "0"
-        if "," in device:
-            device = ",".join([x for x in device.split(",") if x])  # remove sequential commas, i.e. "0,,1" -> "0,1"
         visible = os.environ.get("CUDA_VISIBLE_DEVICES", None)
         os.environ["CUDA_VISIBLE_DEVICES"] = device  # set environment variable - must be before assert is_available()
         if not (torch.cuda.is_available() and torch.cuda.device_count() >= len(device.split(","))):
@@ -196,7 +144,7 @@ def select_device(device="", batch=0, newline=False, verbose=True):
             )
 
     if not cpu and not mps and torch.cuda.is_available():  # prefer GPU if available
-        devices = device.split(",") if device else "0"  # i.e. "0,1" -> ["0", "1"]
+        devices = device.split(",") if device else "0"  # range(torch.cuda.device_count())  # i.e. 0,1,6,7
         n = len(devices)  # device count
         if n > 1:  # multi-GPU
             if batch < 1:
@@ -211,7 +159,8 @@ def select_device(device="", batch=0, newline=False, verbose=True):
                 )
         space = " " * (len(s) + 1)
         for i, d in enumerate(devices):
-            s += f"{'' if i == 0 else space}CUDA:{d} ({get_gpu_info(i)})\n"  # bytes to MB
+            p = torch.cuda.get_device_properties(i)
+            s += f"{'' if i == 0 else space}CUDA:{d} ({p.name}, {p.total_memory / (1 << 20):.0f}MiB)\n"  # bytes to MB
         arg = "cuda:0"
     elif mps and TORCH_2_0 and torch.backends.mps.is_available():
         # Prefer MPS if available
@@ -221,8 +170,6 @@ def select_device(device="", batch=0, newline=False, verbose=True):
         s += f"CPU ({get_cpu_info()})\n"
         arg = "cpu"
 
-    if arg in {"cpu", "mps"}:
-        torch.set_num_threads(NUM_THREADS)  # reset OMP_NUM_THREADS for cpu training
     if verbose:
         LOGGER.info(s if newline else s.rstrip())
     return torch.device(arg)
@@ -253,7 +200,7 @@ def fuse_conv_and_bn(conv, bn):
     )
 
     # Prepare filters
-    w_conv = conv.weight.view(conv.out_channels, -1)
+    w_conv = conv.weight.clone().view(conv.out_channels, -1)
     w_bn = torch.diag(bn.weight.div(torch.sqrt(bn.eps + bn.running_var)))
     fusedconv.weight.copy_(torch.mm(w_bn, w_conv).view(fusedconv.weight.shape))
 
@@ -284,7 +231,7 @@ def fuse_deconv_and_bn(deconv, bn):
     )
 
     # Prepare filters
-    w_deconv = deconv.weight.view(deconv.out_channels, -1)
+    w_deconv = deconv.weight.clone().view(deconv.out_channels, -1)
     w_bn = torch.diag(bn.weight.div(torch.sqrt(bn.eps + bn.running_var)))
     fuseddconv.weight.copy_(torch.mm(w_bn, w_deconv).view(fuseddconv.weight.shape))
 
@@ -297,27 +244,33 @@ def fuse_deconv_and_bn(deconv, bn):
 
 
 def model_info(model, detailed=False, verbose=True, imgsz=640):
-    """Print and return detailed model information layer by layer."""
+    """
+    Model information.
+
+    imgsz may be int or list, i.e. imgsz=640 or imgsz=[640, 320].
+    """
     if not verbose:
         return
     n_p = get_num_params(model)  # number of parameters
     n_g = get_num_gradients(model)  # number of gradients
     n_l = len(list(model.modules()))  # number of layers
     if detailed:
-        LOGGER.info(f"{'layer':>5}{'name':>40}{'gradient':>10}{'parameters':>12}{'shape':>20}{'mu':>10}{'sigma':>10}")
+        LOGGER.info(
+            f"{'layer':>5} {'name':>40} {'gradient':>9} {'parameters':>12} {'shape':>20} {'mu':>10} {'sigma':>10}"
+        )
         for i, (name, p) in enumerate(model.named_parameters()):
             name = name.replace("module_list.", "")
             LOGGER.info(
-                f"{i:>5g}{name:>40s}{p.requires_grad!r:>10}{p.numel():>12g}{str(list(p.shape)):>20s}"
-                f"{p.mean():>10.3g}{p.std():>10.3g}{str(p.dtype):>15s}"
+                "%5g %40s %9s %12g %20s %10.3g %10.3g %10s"
+                % (i, name, p.requires_grad, p.numel(), list(p.shape), p.mean(), p.std(), p.dtype)
             )
 
-    flops = get_flops(model, imgsz)  # imgsz may be int or list, i.e. imgsz=640 or imgsz=[640, 320]
+    flops = get_flops(model, imgsz)
     fused = " (fused)" if getattr(model, "is_fused", lambda: False)() else ""
     fs = f", {flops:.1f} GFLOPs" if flops else ""
     yaml_file = getattr(model, "yaml_file", "") or getattr(model, "yaml", {}).get("yaml_file", "")
     model_name = Path(yaml_file).stem.replace("yolo", "YOLO") or "Model"
-    LOGGER.info(f"{model_name} summary{fused}: {n_l:,} layers, {n_p:,} parameters, {n_g:,} gradients{fs}")
+    LOGGER.info(f"{model_name} summary{fused}: {n_l} layers, {n_p} parameters, {n_g} gradients{fs}")
     return n_l, n_p, n_g, flops
 
 
@@ -338,13 +291,11 @@ def model_info_for_loggers(trainer):
     Example:
         YOLOv8n info for loggers
         ```python
-        results = {
-            "model/parameters": 3151904,
-            "model/GFLOPs": 8.746,
-            "model/speed_ONNX(ms)": 41.244,
-            "model/speed_TensorRT(ms)": 3.211,
-            "model/speed_PyTorch(ms)": 18.755,
-        }
+        results = {'model/parameters': 3151904,
+                   'model/GFLOPs': 8.746,
+                   'model/speed_ONNX(ms)': 41.244,
+                   'model/speed_TensorRT(ms)': 3.211,
+                   'model/speed_PyTorch(ms)': 18.755}
         ```
     """
     if trainer.args.profile:  # profile ONNX and TensorRT times
@@ -363,6 +314,9 @@ def model_info_for_loggers(trainer):
 
 def get_flops(model, imgsz=640):
     """Return a YOLO model's FLOPs."""
+    if not thop:
+        return 0.0  # if not installed return 0.0 GFLOPs
+
     try:
         model = de_parallel(model)
         p = next(model.parameters())
@@ -421,7 +375,9 @@ def initialize_weights(model):
 
 
 def scale_img(img, ratio=1.0, same_shape=False, gs=32):
-    """Scales and pads an image tensor, optionally maintaining aspect ratio and padding to gs multiple."""
+    """Scales and pads an image tensor of shape img(bs,3,y,x) based on given ratio and grid size gs, optionally
+    retaining the original shape.
+    """
     if ratio == 1.0:
         return img
     h, w = img.shape[2:]
@@ -430,6 +386,13 @@ def scale_img(img, ratio=1.0, same_shape=False, gs=32):
     if not same_shape:  # pad/crop img
         h, w = (math.ceil(x * ratio / gs) * gs for x in (h, w))
     return F.pad(img, [0, w - s[1], 0, h - s[0]], value=0.447)  # value = imagenet mean
+
+
+def make_divisible(x, divisor):
+    """Returns nearest x divisible by divisor."""
+    if isinstance(divisor, torch.Tensor):
+        divisor = int(divisor.max())  # to int
+    return math.ceil(x / divisor) * divisor
 
 
 def copy_attr(a, b, include=(), exclude=()):
@@ -493,17 +456,14 @@ def init_seeds(seed=0, deterministic=False):
 
 
 class ModelEMA:
-    """
-    Updated Exponential Moving Average (EMA) from https://github.com/rwightman/pytorch-image-models. Keeps a moving
-    average of everything in the model state_dict (parameters and buffers).
-
+    """Updated Exponential Moving Average (EMA) from https://github.com/rwightman/pytorch-image-models
+    Keeps a moving average of everything in the model state_dict (parameters and buffers)
     For EMA details see https://www.tensorflow.org/api_docs/python/tf/train/ExponentialMovingAverage
-
     To disable EMA set the `enabled` attribute to `False`.
     """
 
     def __init__(self, model, decay=0.9999, tau=2000, updates=0):
-        """Initialize EMA for 'model' with given arguments."""
+        """Create EMA."""
         self.ema = deepcopy(de_parallel(model)).eval()  # FP32 EMA
         self.updates = updates  # number of EMA updates
         self.decay = lambda x: decay * (1 - math.exp(-x / tau))  # decay exponential ramp (to help early epochs)
@@ -530,70 +490,47 @@ class ModelEMA:
             copy_attr(self.ema, model, include, exclude)
 
 
-def strip_optimizer(f: Union[str, Path] = "best.pt", s: str = "", updates: dict = None) -> dict:
+def strip_optimizer(f: Union[str, Path] = "best.pt", s: str = "") -> None:
     """
     Strip optimizer from 'f' to finalize training, optionally save as 's'.
 
     Args:
         f (str): file path to model to strip the optimizer from. Default is 'best.pt'.
         s (str): file path to save the model with stripped optimizer to. If not provided, 'f' will be overwritten.
-        updates (dict): a dictionary of updates to overlay onto the checkpoint before saving.
 
     Returns:
-        (dict): The combined checkpoint dictionary.
+        None
 
     Example:
         ```python
         from pathlib import Path
         from ultralytics.utils.torch_utils import strip_optimizer
 
-        for f in Path("path/to/model/checkpoints").rglob("*.pt"):
+        for f in Path('path/to/weights').rglob('*.pt'):
             strip_optimizer(f)
         ```
-
-    Note:
-        Use `ultralytics.nn.torch_safe_load` for missing modules with `x = torch_safe_load(f)[0]`
     """
-    try:
-        x = torch.load(f, map_location=torch.device("cpu"))
-        assert isinstance(x, dict), "checkpoint is not a Python dictionary"
-        assert "model" in x, "'model' missing from checkpoint"
-    except Exception as e:
-        LOGGER.warning(f"WARNING ⚠️ Skipping {f}, not a valid Ultralytics model: {e}")
-        return {}
+    x = torch.load(f, map_location=torch.device("cpu"))
+    if "model" not in x:
+        LOGGER.info(f"Skipping {f}, not a valid Ultralytics model.")
+        return
 
-    metadata = {
-        "date": datetime.now().isoformat(),
-        "version": __version__,
-        "license": "AGPL-3.0 License (https://ultralytics.com/license)",
-        "docs": "https://docs.ultralytics.com",
-    }
-
-    # Update model
-    if x.get("ema"):
-        x["model"] = x["ema"]  # replace model with EMA
     if hasattr(x["model"], "args"):
         x["model"].args = dict(x["model"].args)  # convert from IterableSimpleNamespace to dict
-    if hasattr(x["model"], "criterion"):
-        x["model"].criterion = None  # strip loss criterion
-    x["model"].half()  # to FP16
-    for p in x["model"].parameters():
-        p.requires_grad = False
-
-    # Update other keys
-    args = {**DEFAULT_CFG_DICT, **x.get("train_args", {})}  # combine args
+    args = {**DEFAULT_CFG_DICT, **x["train_args"]} if "train_args" in x else None  # combine args
+    if x.get("ema"):
+        x["model"] = x["ema"]  # replace model with ema
     for k in "optimizer", "best_fitness", "ema", "updates":  # keys
         x[k] = None
     x["epoch"] = -1
+    x["model"].half()  # to FP16
+    for p in x["model"].parameters():
+        p.requires_grad = False
     x["train_args"] = {k: v for k, v in args.items() if k in DEFAULT_CFG_KEYS}  # strip non-default keys
     # x['model'].args = x['train_args']
-
-    # Save
-    combined = {**metadata, **x, **(updates or {})}
-    torch.save(combined, s or f)  # combine dicts (prefer to the right)
+    torch.save(x, s or f)
     mb = os.path.getsize(s or f) / 1e6  # file size
     LOGGER.info(f"Optimizer stripped from {f},{f' saved as {s},' if s else ''} {mb:.1f}MB")
-    return combined
 
 
 def convert_optimizer_state_dict_to_fp16(state_dict):
@@ -610,33 +547,7 @@ def convert_optimizer_state_dict_to_fp16(state_dict):
     return state_dict
 
 
-@contextmanager
-def cuda_memory_usage(device=None):
-    """
-    Monitor and manage CUDA memory usage.
-
-    This function checks if CUDA is available and, if so, empties the CUDA cache to free up unused memory.
-    It then yields a dictionary containing memory usage information, which can be updated by the caller.
-    Finally, it updates the dictionary with the amount of memory reserved by CUDA on the specified device.
-
-    Args:
-        device (torch.device, optional): The CUDA device to query memory usage for. Defaults to None.
-
-    Yields:
-        (dict): A dictionary with a key 'memory' initialized to 0, which will be updated with the reserved memory.
-    """
-    cuda_info = dict(memory=0)
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        try:
-            yield cuda_info
-        finally:
-            cuda_info["memory"] = torch.cuda.memory_reserved(device)
-    else:
-        yield cuda_info
-
-
-def profile(input, ops, n=10, device=None, max_num_obj=0):
+def profile(input, ops, n=10, device=None):
     """
     Ultralytics speed, memory and FLOPs profiler.
 
@@ -657,8 +568,7 @@ def profile(input, ops, n=10, device=None, max_num_obj=0):
         f"{'Params':>12s}{'GFLOPs':>12s}{'GPU_mem (GB)':>14s}{'forward (ms)':>14s}{'backward (ms)':>14s}"
         f"{'input':>24s}{'output':>24s}"
     )
-    gc.collect()  # attempt to free unused memory
-    torch.cuda.empty_cache()
+
     for x in input if isinstance(input, list) else [input]:
         x = x.to(device)
         x.requires_grad = True
@@ -667,36 +577,24 @@ def profile(input, ops, n=10, device=None, max_num_obj=0):
             m = m.half() if hasattr(m, "half") and isinstance(x, torch.Tensor) and x.dtype is torch.float16 else m
             tf, tb, t = 0, 0, [0, 0, 0]  # dt forward, backward
             try:
-                flops = thop.profile(m, inputs=[x], verbose=False)[0] / 1e9 * 2  # GFLOPs
+                flops = thop.profile(m, inputs=[x], verbose=False)[0] / 1e9 * 2 if thop else 0  # GFLOPs
             except Exception:
                 flops = 0
 
             try:
-                mem = 0
                 for _ in range(n):
-                    with cuda_memory_usage(device) as cuda_info:
-                        t[0] = time_sync()
-                        y = m(x)
-                        t[1] = time_sync()
-                        try:
-                            (sum(yi.sum() for yi in y) if isinstance(y, list) else y).sum().backward()
-                            t[2] = time_sync()
-                        except Exception:  # no backward method
-                            # print(e)  # for debug
-                            t[2] = float("nan")
-                    mem += cuda_info["memory"] / 1e9  # (GB)
+                    t[0] = time_sync()
+                    y = m(x)
+                    t[1] = time_sync()
+                    try:
+                        (sum(yi.sum() for yi in y) if isinstance(y, list) else y).sum().backward()
+                        t[2] = time_sync()
+                    except Exception:  # no backward method
+                        # print(e)  # for debug
+                        t[2] = float("nan")
                     tf += (t[1] - t[0]) * 1000 / n  # ms per op forward
                     tb += (t[2] - t[1]) * 1000 / n  # ms per op backward
-                    if max_num_obj:  # simulate training with predictions per image grid (for AutoBatch)
-                        with cuda_memory_usage(device) as cuda_info:
-                            torch.randn(
-                                x.shape[0],
-                                max_num_obj,
-                                int(sum((x.shape[-1] / s) * (x.shape[-2] / s) for s in m.stride.tolist())),
-                                device=device,
-                                dtype=torch.float32,
-                            )
-                        mem += cuda_info["memory"] / 1e9  # (GB)
+                mem = torch.cuda.memory_reserved() / 1e9 if torch.cuda.is_available() else 0  # (GB)
                 s_in, s_out = (tuple(x.shape) if isinstance(x, torch.Tensor) else "list" for x in (x, y))  # shapes
                 p = sum(x.numel() for x in m.parameters()) if isinstance(m, nn.Module) else 0  # parameters
                 LOGGER.info(f"{p:12}{flops:12.4g}{mem:>14.3f}{tf:14.4g}{tb:14.4g}{str(s_in):>24s}{str(s_out):>24s}")
@@ -704,9 +602,8 @@ def profile(input, ops, n=10, device=None, max_num_obj=0):
             except Exception as e:
                 LOGGER.info(e)
                 results.append(None)
-            finally:
-                gc.collect()  # attempt to free unused memory
-                torch.cuda.empty_cache()
+            gc.collect()  # attempt to free unused memory
+            torch.cuda.empty_cache()
     return results
 
 
@@ -754,48 +651,3 @@ class EarlyStopping:
                 f"i.e. `patience=300` or use `patience=0` to disable EarlyStopping."
             )
         return stop
-
-
-class FXModel(nn.Module):
-    """
-    A custom model class for torch.fx compatibility.
-
-    This class extends `torch.nn.Module` and is designed to ensure compatibility with torch.fx for tracing and graph manipulation.
-    It copies attributes from an existing model and explicitly sets the model attribute to ensure proper copying.
-
-    Args:
-        model (torch.nn.Module): The original model to wrap for torch.fx compatibility.
-    """
-
-    def __init__(self, model):
-        """
-        Initialize the FXModel.
-
-        Args:
-            model (torch.nn.Module): The original model to wrap for torch.fx compatibility.
-        """
-        super().__init__()
-        copy_attr(self, model)
-        # Explicitly set `model` since `copy_attr` somehow does not copy it.
-        self.model = model.model
-
-    def forward(self, x):
-        """
-        Forward pass through the model.
-
-        This method performs the forward pass through the model, handling the dependencies between layers and saving intermediate outputs.
-
-        Args:
-            x (torch.Tensor): The input tensor to the model.
-
-        Returns:
-            (torch.Tensor): The output tensor from the model.
-        """
-        y = []  # outputs
-        for m in self.model:
-            if m.f != -1:  # if not from previous layer
-                # from earlier layers
-                x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]
-            x = m(x)  # run
-            y.append(x)  # save output
-        return x
